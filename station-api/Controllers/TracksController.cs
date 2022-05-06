@@ -5,6 +5,7 @@ using station_api.Models;
 using System.Data;
 using System.Data.SqlClient;
 using System.Text;
+using Renci.SshNet;
 
 
 namespace station_api.Controllers
@@ -14,11 +15,13 @@ namespace station_api.Controllers
     public class TracksController : ControllerBase
     {
         private readonly ILogger<TracksController> _logger;
+        private readonly IWebHostEnvironment _hostingEnvironment;
         public IConfiguration _configuration;
 
-        public TracksController(ILogger<TracksController> logger, IConfiguration configuration)
+        public TracksController(ILogger<TracksController> logger, IWebHostEnvironment hostingEnvironment, IConfiguration configuration)
         {
             this._logger = logger;
+            this._hostingEnvironment = hostingEnvironment;
             this._configuration = configuration;
         }
 
@@ -38,6 +41,126 @@ namespace station_api.Controllers
             };
 
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// TrackIDからファイルを取得する
+        /// </summary>
+        /// <param name="trackId">トラックID</param>
+        /// <returns></returns>
+        [HttpGet("{trackId}")]
+        public IActionResult GetFile(string trackId)
+        {
+            // trackIdからファイルパスを取得する
+            Track track = GetTrack(trackId);
+            if (track == null) return NotFound();
+
+            // 一時保存ディレクトリ名を取得する
+            string temporaryDirectory = this._configuration.GetSection("NasSettings:TemporaryDirectory").Value;
+
+            // TrackのLocationからファイル名を取得する
+            string fileName = Path.GetFileName(track.Location);
+
+            // TrackのLocationをLinuxのパス表記に変換する
+            string replaceSourcePrefix = this._configuration.GetSection("NasSettings:ReplaceSourcePrefix").Value;
+            string replaceToPrefix = this._configuration.GetSection("NasSettings:ReplaceToPrefix").Value;
+            track.Location = track.Location.Replace(replaceSourcePrefix, replaceToPrefix);
+
+            // NasへSCP接続し、ファイルを取得する
+            try
+            {
+                // SCP接続情報を取得する
+                string host = this._configuration.GetSection("NasSettings:Host").Value;
+                string port = this._configuration.GetSection("NasSettings:Port").Value;
+                string userName = this._configuration.GetSection("NasSettings:Username").Value;
+
+                // 秘密鍵情報を取得する
+                var _PrivateKey = new PrivateKeyAuthenticationMethod(userName, new PrivateKeyFile("/app/Ssh/id_rsa_homenas-station_root"));
+
+                // 接続情報オブジェクトを生成する
+                var connectionInfo = new Renci.SshNet.ConnectionInfo(
+                    host,
+                    Convert.ToInt32(port),
+                    userName,
+                    new AuthenticationMethod[]
+                    {
+                        _PrivateKey,
+                    }
+                );
+
+                // 接続情報オブジェクトをもとにSSH接続する
+                using (var client = new ScpClient(connectionInfo))
+                {
+                    client.RemotePathTransformation = RemotePathTransformation.ShellQuote;
+                    client.Connect();
+
+                    // 対象のファイルをダウンロードする
+                    FileInfo fileInfo = new FileInfo(temporaryDirectory + "/" + "test01");
+                    client.Download(track.Location, fileInfo);
+                }
+
+                // ダウンロードしたファイルに基づいてヘッダーを作成する
+                string fileNameUrl = System.Net.WebUtility.UrlEncode(fileName);
+                // スペースが+に変換されるバグに対応。+を%20に置き換え
+                fileNameUrl = fileNameUrl.Replace("+", "%20");
+                Response.Headers.Append("Content-Disposition","attachment;filename=\"" + fileNameUrl + "\"");
+
+                // 呼び出し元にファイルを送信する
+                return new PhysicalFileResult(temporaryDirectory + "/test01", "application/download");
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// 指定したトラックIDからTrackデータを取得する
+        /// もし存在しない場合は、nullを返却する
+        /// </summary>
+        /// <param name="trackId">トラックID</param>
+        /// <returns>指定したtrackIdのTrackデータ</returns>
+        private Track GetTrack(string trackId)
+        {
+            Track track = null;
+
+            // SQLコネクションの作成
+            using (SqlConnection con = new SqlConnection(this.GenerateConnectionString()))
+            {
+                // コネクションのオープン
+                con.Open();
+
+                // SQLコマンドの作成
+                SqlCommand cmd = con.CreateCommand();
+
+                // SQLコマンドの作成
+                StringBuilder sql = new StringBuilder();
+                sql.Append(Track.TracksSelectSql());
+                sql.AppendLine("where ");
+                sql.AppendLine("    TrackID = @trackId ");
+
+                cmd.CommandText = sql.ToString();
+
+                List<SqlParameter> listPara = new List<SqlParameter>()
+                {
+                    new SqlParameter() { ParameterName = "@trackId", Value = trackId, SqlDbType = SqlDbType.NVarChar }
+                };
+
+                listPara.ForEach(param => cmd.Parameters.Add(param));
+
+                // SQLの実行
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        track = new Track(reader);
+                    }
+                }
+
+                con.Close();
+
+                return track;
+            }
         }
 
         /// <summary>

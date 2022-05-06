@@ -364,3 +364,9 @@ FodyWeavers.xsd
 
 # AppSettings (included the password of the SQL Server)
 **/station-api/appsettings.json
+
+# Ssh key
+**/station-api/Ssh
+
+# Temporary files
+**/station-api/Temp
