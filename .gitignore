@@ -363,4 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # AppSettings (included the password of the SQL Server)
-station-api/appsettings.json
+**/station-api/appsettiongs.json
