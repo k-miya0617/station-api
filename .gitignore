@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# AppSettings (included the password of the SQL Server)
+station-api/appsettings.json
