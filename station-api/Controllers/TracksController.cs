@@ -88,6 +88,9 @@ namespace station_api.Controllers
                     }
                 );
 
+                // 一次保存用のファイル名を生成する
+                string randomFileName = GenerateRandomString(16);
+
                 // 接続情報オブジェクトをもとにSSH接続する
                 using (var client = new ScpClient(connectionInfo))
                 {
@@ -95,18 +98,19 @@ namespace station_api.Controllers
                     client.Connect();
 
                     // 対象のファイルをダウンロードする
-                    FileInfo fileInfo = new FileInfo(temporaryDirectory + "/" + "test01");
+                    FileInfo fileInfo = new FileInfo($"{temporaryDirectory}/{randomFileName}");
                     client.Download(track.Location, fileInfo);
                 }
 
                 // ダウンロードしたファイルに基づいてヘッダーを作成する
                 string fileNameUrl = System.Net.WebUtility.UrlEncode(fileName);
+
                 // スペースが+に変換されるバグに対応。+を%20に置き換え
                 fileNameUrl = fileNameUrl.Replace("+", "%20");
-                Response.Headers.Append("Content-Disposition","attachment;filename=\"" + fileNameUrl + "\"");
+                Response.Headers.Append("Content-Disposition",$"attachment;filename=\"{fileNameUrl}\"");
 
                 // 呼び出し元にファイルを送信する
-                return new PhysicalFileResult(temporaryDirectory + "/test01", "application/download");
+                return new PhysicalFileResult(temporaryDirectory + $"/{randomFileName}", "application/download");
             }
             catch (Exception)
             {
@@ -319,6 +323,18 @@ namespace station_api.Controllers
                 if (list.Count == 0) return NotFound();
                 return Ok(list);
             }
+        }
+
+        public static string GenerateRandomString(int length = 16)
+        {
+            string charactors = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            char[] charsArr = new char[length];
+            Random random = new Random();
+
+            for (int i = 0; i < charsArr.Length; i++)
+                charsArr[i] = charactors[random.Next(charactors.Length)];
+
+            return new string(charsArr);
         }
     }
 }
