@@ -298,6 +298,7 @@ namespace station_api.Controllers
                 sql.AppendLine("or Album like @keyword ");
                 sql.AppendLine("or AlbumArtist like @keyword ");
                 sql.AppendLine("or Composer like @keyword ");
+                sql.AppendLine("order by Album, DiscNumber, TrackNumber ");
 
                 cmd.CommandText = sql.ToString();
 
