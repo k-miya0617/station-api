@@ -55,9 +55,6 @@ namespace station_api.Controllers
             Track track = GetTrack(trackId);
             if (track == null) return NotFound();
 
-            // 一時保存ディレクトリ名を取得する
-            string temporaryDirectory = this._configuration.GetSection("NasSettings:TemporaryDirectory").Value;
-
             // TrackのLocationからファイル名を取得する
             string fileName = Path.GetFileName(track.Location);
 
@@ -88,8 +85,8 @@ namespace station_api.Controllers
                     }
                 );
 
-                // 一次保存用のファイル名を生成する
-                string randomFileName = GenerateRandomString(16);
+                // ファイル保存用のメモリストリームを用意する
+                MemoryStream ms = new MemoryStream();
 
                 // 接続情報オブジェクトをもとにSSH接続する
                 using (var client = new ScpClient(connectionInfo))
@@ -98,8 +95,7 @@ namespace station_api.Controllers
                     client.Connect();
 
                     // 対象のファイルをダウンロードする
-                    FileInfo fileInfo = new FileInfo($"{temporaryDirectory}/{randomFileName}");
-                    client.Download(track.Location, fileInfo);
+                    client.Download(track.Location, ms);
                 }
 
                 // ダウンロードしたファイルに基づいてヘッダーを作成する
@@ -110,7 +106,7 @@ namespace station_api.Controllers
                 Response.Headers.Append("Content-Disposition",$"attachment;filename=\"{fileNameUrl}\"");
 
                 // 呼び出し元にファイルを送信する
-                return new PhysicalFileResult(temporaryDirectory + $"/{randomFileName}", "application/download");
+                return File(ms.ToArray(), "application/download", fileName);
             }
             catch (Exception)
             {
