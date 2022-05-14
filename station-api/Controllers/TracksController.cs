@@ -6,7 +6,7 @@ using System.Data;
 using System.Data.SqlClient;
 using System.Text;
 using Renci.SshNet;
-
+using System.Net;
 
 namespace station_api.Controllers
 {
@@ -17,6 +17,8 @@ namespace station_api.Controllers
         private readonly ILogger<TracksController> _logger;
         private readonly IWebHostEnvironment _hostingEnvironment;
         public IConfiguration _configuration;
+
+        public static HttpClient httpClient;
 
         public TracksController(ILogger<TracksController> logger, IWebHostEnvironment hostingEnvironment, IConfiguration configuration)
         {
@@ -49,7 +51,7 @@ namespace station_api.Controllers
         /// <param name="trackId">トラックID</param>
         /// <returns></returns>
         [HttpGet("{trackId}")]
-        public IActionResult GetFile(string trackId)
+        public async Task<IActionResult> GetFileAsync(string trackId, bool notConvertM4a = false)
         {
             // trackIdからファイルパスを取得する
             Track track = GetTrack(trackId);
@@ -86,7 +88,7 @@ namespace station_api.Controllers
                 );
 
                 // ファイル保存用のメモリストリームを用意する
-                MemoryStream ms = new MemoryStream();
+                MemoryStream memoryStream = new MemoryStream();
 
                 // 接続情報オブジェクトをもとにSSH接続する
                 using (var client = new ScpClient(connectionInfo))
@@ -95,7 +97,20 @@ namespace station_api.Controllers
                     client.Connect();
 
                     // 対象のファイルをダウンロードする
-                    client.Download(track.Location, ms);
+                    client.Download(track.Location, memoryStream);
+                }
+
+                // ダウンロードしたファイルが Apple Losslessの場合、station-flask-apiを通じてalacファイルに変換する
+                if (track.Kind.Equals("Apple Losslessオーディオファイル") && !notConvertM4a)
+                {
+                    string url = "http://" +
+                        this._configuration.GetSection("FlaskApiConfig:Host").Value + ":" +
+                        this._configuration.GetSection("FlaskApiConfig:Port").Value + "/convert/alac-to-flac/?file";
+
+                    memoryStream = await ConvertM4aToAlac(url, memoryStream, fileName);
+
+                    // ファイルの拡張子をm4aからflacに変更する
+                    fileName = Path.GetFileNameWithoutExtension(fileName) + ".flac";
                 }
 
                 // ダウンロードしたファイルに基づいてヘッダーを作成する
@@ -103,10 +118,57 @@ namespace station_api.Controllers
 
                 // スペースが+に変換されるバグに対応。+を%20に置き換え
                 fileNameUrl = fileNameUrl.Replace("+", "%20");
-                Response.Headers.Append("Content-Disposition",$"attachment;filename=\"{fileNameUrl}\"");
+                Response.Headers.Append("Content-Disposition", $"attachment;filename=\"{fileNameUrl}\"");
 
                 // 呼び出し元にファイルを送信する
-                return File(ms.ToArray(), "application/download", fileName);
+                return File(memoryStream.ToArray(), "application/download", fileName);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// m4aファイルのmemoryStreamをflask-apiを通じてflacに変換する
+        /// </summary>
+        /// <param name="url">flask-apiのURL</param>
+        /// <param name="m4aMemoryStream">m4aファイルのメモリストリーム</param>
+        /// <param name="fileName">m4aファイルのファイル名</param>
+        /// <returns>flacファイルのメモリストリーム</returns>
+        private async Task<MemoryStream> ConvertM4aToAlac(string url, MemoryStream m4aMemoryStream, string fileName)
+        {
+            try
+            {
+                // マルチパートフォームを作成する
+                using (var multipartFormContent = new MultipartFormDataContent())
+                {
+                    // m4aファイルのメモリストリームの読み込み位置をリセットする
+                    m4aMemoryStream.Position = 0;
+
+                    // ファイルストリームコンテンツを作成する
+                    var fileStreamContent = new StreamContent(m4aMemoryStream);
+                    fileStreamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/aac");
+                    multipartFormContent.Add(fileStreamContent, name: "file", fileName: fileName);
+
+                    // HttpClientを初期化する
+                    if (httpClient == null) httpClient = new HttpClient();
+
+                    // APIへPOSTし、レスポンスを受け取る
+                    var response = await httpClient.PostAsync(url, multipartFormContent);
+
+                    // もしレスポンスが200ではない場合、例外を出力する
+                    if (response.StatusCode != HttpStatusCode.OK) throw new Exception();
+
+                    // レスポンスからMemoryStreamを取得する
+                    using (var httpStream = await response.Content.ReadAsStreamAsync())
+                    {
+                        MemoryStream alacMemoryStream = new MemoryStream();
+                        httpStream.CopyTo(alacMemoryStream);
+                        return alacMemoryStream;
+                    }
+                }
             }
             catch (Exception)
             {
@@ -255,16 +317,11 @@ namespace station_api.Controllers
 
                 con.Close();
 
-                if (list.Count == 0)
-                {
-                    return NotFound();
-                }
+                if (list.Count == 0) return NotFound();
 
                 return Ok(list);
-
             }
         }
-
 
         /// <summary>
         /// 検索キーワードからトラックを取得する
@@ -320,18 +377,6 @@ namespace station_api.Controllers
                 if (list.Count == 0) return NotFound();
                 return Ok(list);
             }
-        }
-
-        public static string GenerateRandomString(int length = 16)
-        {
-            string charactors = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-            char[] charsArr = new char[length];
-            Random random = new Random();
-
-            for (int i = 0; i < charsArr.Length; i++)
-                charsArr[i] = charactors[random.Next(charactors.Length)];
-
-            return new string(charsArr);
         }
     }
 }
