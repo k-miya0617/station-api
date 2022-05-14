@@ -101,7 +101,7 @@ namespace station_api.Controllers
                 }
 
                 // ダウンロードしたファイルが Apple Losslessの場合、station-flask-apiを通じてalacファイルに変換する
-                if (track.Kind.Equals("Apple Losslessオーディオファイル") && !notConvertM4a)
+                if ((track.Kind.Equals("Apple Losslessオーディオファイル") || track.Kind.Equals("Apple ロスレス・オーディオファイル")) && !notConvertM4a)
                 {
                     string url = "http://" +
                         this._configuration.GetSection("FlaskApiConfig:Host").Value + ":" +
